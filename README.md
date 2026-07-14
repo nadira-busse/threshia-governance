@@ -1,5 +1,7 @@
 # Threshia — Runtime Governance Engine
 
+![Tests](https://github.com/nadira-busse/threshia-governance/actions/workflows/tests.yml/badge.svg)
+
 Threshia evaluates individual AI-agent tool calls while an agent is running,
 and returns one of three verdicts: `ALLOW`, `BLOCK`, or `FLAG`.
 
