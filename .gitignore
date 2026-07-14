@@ -1,0 +1,33 @@
+# Virtual environments
+venv/
+.venv*/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Python package build artifacts
+*.egg-info/
+build/
+dist/
+
+# Environment variables (contains API keys)
+.env
+
+# ChromaDB local persistence
+.chroma/
+
+# Audit logs (generated at runtime)
+audit.jsonl
+
+# Internal build logs and sprint notes (not for public repo)
+internal/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
