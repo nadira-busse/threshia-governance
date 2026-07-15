@@ -111,6 +111,12 @@ exercises ChromaDB retrieval plus a real API call. Both provider paths
 have been manually verified against their real APIs — see
 `docs/known-limitations.md` for details.
 
+## Author
+
+**Nadira Büsse**
+
+[LinkedIn](https://www.linkedin.com/in/nadirabusse)
+
 ## License
 
-MIT.
+[MIT](LICENSE).
