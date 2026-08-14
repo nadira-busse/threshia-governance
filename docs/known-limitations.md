@@ -10,6 +10,26 @@ by the optional semantic layer, if configured, or defaults to `FLAG`. This
 is a coverage gap, not an engine defect — the fail-safe default is working
 as designed in that case.
 
+## Semantic retrieval has no relevance threshold
+
+The optional semantic layer retrieves the nearest policy documents from
+ChromaDB, but it does not currently apply a minimum similarity or distance
+threshold before sending that context to the configured LLM provider.
+
+The current repository contains three indexed policy documents while
+`TOP_K_POLICIES` is configured as `5`. With this small corpus, semantic
+fallback therefore returns all three policies rather than filtering the
+result to a smaller set of sufficiently relevant policies.
+
+The LLM is expected to reason over that retrieved context and prefer
+`FLAG` when the available policy evidence is insufficient. This means the
+semantic path is probabilistic and can return `ALLOW`, `BLOCK`, or `FLAG`;
+there is no additional deterministic relevance gate after retrieval.
+
+Adding a relevance threshold would require evaluation evidence for an
+appropriate cutoff rather than choosing one arbitrarily. That calibration
+is outside the current MVP.
+
 ## Never-permitted parsing depends on a Markdown convention
 
 `rules/never_permitted.py` extracts blocked action names by looking for a
@@ -65,6 +85,23 @@ Every tool call evaluated in this repository, in tests and in the example
 script, is a `ToolCall` object constructed directly in Python. Threshia has
 not been connected to an actual running agent that generates tool-call
 attempts on its own.
+
+## Human approval evidence is not independently verified
+
+For gated tool calls, Threshia currently reads
+`human_approval_evidenced` from the caller-supplied `ToolCall.parameters`
+and uses that boolean as the approval-evidence signal.
+
+The engine deterministically enforces that gated actions require this
+signal and that never-permitted actions remain blocked even when the
+signal is present. It does not, however, verify that the value came from
+an independent human-approval workflow, trusted identity system, signed
+approval record, or other external source.
+
+This is sufficient for the current directly-constructed test and example
+calls, but a live agent integration would need to establish approval
+evidence outside the agent-controlled tool arguments before passing that
+trusted result into the governance engine.
 
 ## Audit log has no rotation or size management
 
