@@ -115,8 +115,6 @@ have been manually verified against their real APIs — see
 
 **Nadira Büsse**
 
-[LinkedIn](https://www.linkedin.com/in/nadirabusse)
-
 ## License
 
 [MIT](LICENSE).
