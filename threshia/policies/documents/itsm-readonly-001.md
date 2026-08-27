@@ -6,6 +6,15 @@ applicable_tools:
   - ITSM.IncidentLookup
   - ITSM.ClassificationSuggest
   - ITSM.AssignmentGroupRecommend
+never_permitted:
+  - close_ticket
+  - update_incident_status
+  - change_priority_without_review
+  - assign_ticket_without_review
+  - trigger_change_request
+  - access_privileged_credentials
+  - modify_production_system
+  - execute_remediation_action
 source: Kelvior Security Policy + IT Ticket Triage agent definition (AGT-ITO-TKT-001)
 ---
 
@@ -13,12 +22,12 @@ source: Kelvior Security Policy + IT Ticket Triage agent definition (AGT-ITO-TKT
 
 ## Context
 
-The Kelvior ITSM Connector (MCP-ITSM, ServiceNow) grants IT Ticket
+The ITSM connector (MCP-ITSM, ServiceNow) grants IT Ticket
 Triage read-only access to incident data. The agent classifies
 incidents, suggests priority and recommends assignment groups, but
 never changes a ServiceNow record itself. All actual ticket changes
-stay human-controlled. This is the clearest ALLOW case in Kelvior's
-agent set: read, recommend, summarize — never write.
+stay human-controlled. This is the clearest ALLOW case in this policy
+set: read, recommend, summarize — never write.
 
 ## Rule
 
@@ -31,16 +40,12 @@ These retrieve incident context or produce a suggestion for a human
 reviewer. None of them write to ServiceNow, so there is no
 irreversible action to gate.
 
-**The following actions are never permitted for an autonomous agent:**
-
-- `close_ticket`
-- `update_incident_status`
-- `change_priority_without_review`
-- `assign_ticket_without_review`
-- `trigger_change_request`
-- `access_privileged_credentials`
-- `modify_production_system`
-- `execute_remediation_action`
+**The machine-enforced never-permitted actions for this policy are
+defined in the `never_permitted` frontmatter field above.** They cover
+closing tickets, changing incident status or priority without review,
+assigning tickets without review, triggering change requests, accessing
+privileged credentials, modifying production systems, and executing
+remediation actions directly.
 
 These write to production systems or bypass the human review step
 that the agent's `recommendation`-only scope depends on. An agent that

@@ -2,114 +2,127 @@
 
 ![Tests](https://github.com/nadira-busse/threshia-governance/actions/workflows/tests.yml/badge.svg)
 
-Threshia evaluates individual AI-agent tool calls while an agent is running,
-and returns one of three verdicts: `ALLOW`, `BLOCK`, or `FLAG`.
+Threshia checks proposed AI-agent tool calls against explicit policies before an external tool is allowed to run.
 
-I built Threshia after working on Kelvior Agent Decision Gate, a reasoning
-agent that decides whether an AI agent is ready to be deployed at all. That
-project answers one question well — *should this agent go live?* — but it
-doesn't answer a different one: once an agent is live, is every action it
-takes actually allowed? Those are two separate gates. Kelvior checks
-readiness before deployment. Threshia checks individual actions during
-execution. This repository is the second gate.
+I built it around a simple problem: an agent may be allowed to operate, but that does not mean every action it proposes should be treated the same way. Some actions can proceed, some need approval, some must be blocked, and unfamiliar actions should be reviewed instead of guessed into permission.
 
-## What it does
+Threshia returns one of three decisions:
 
-Threshia takes a proposed tool call — a tool name and its parameters — and
-checks it against a set of governance policies. The evaluation runs in a
-fixed order:
+- `ALLOW` — a policy explicitly allows the call;
+- `BLOCK` — a policy explicitly prohibits the action;
+- `FLAG` — the call needs review or cannot be authorized from the current policies.
 
-1. **Never-permitted check.** Some actions are blocked outright, regardless
-   of context (releasing a payment, modifying an employee record). This
-   check runs first and cannot be overridden by anything downstream.
-2. **Policy match.** Does any loaded policy govern this tool?
-3. **Approval gating.** If the matching policy requires evidenced human
-   approval for this specific tool, the call is only allowed once that
-   evidence is present.
-4. **Optional semantic fallback.** If no policy explicitly covers the tool,
-   Threshia can retrieve the most related policy text (ChromaDB) and ask a
-   configured LLM provider to reason about it, instead of defaulting
-   straight to `FLAG`. Mistral and OpenAI are both supported behind one
-   provider interface — switching is a config change (`THRESHIA_PROVIDER`),
-   not a code change. This step is optional — see below.
+## How it works
 
-`evaluate_and_log()` appends each result to the JSONL audit log.
-`evaluate()` returns the same verdict without writing to disk, which keeps
-tests and standalone evaluation side-effect free.
+For each `ToolCall`, Threshia follows a fixed order:
 
-## Why the policies are Kelvior policies
+1. **Blocked actions** — rules marked as `never_permitted` are checked first. A match always returns `BLOCK`.
+2. **Known tools** — if a policy explicitly covers the tool, Threshia evaluates it using deterministic rules.
+3. **Approval checks** — gated tools require `human_approval_evidenced=True`.
+4. **Unknown tools** — if no policy covers the tool, Threshia can retrieve related policy context and use Mistral or OpenAI to help explain what may be relevant.
 
-The three policy documents in this repository aren't generic examples. They
-are written directly from three of Kelvior's real agent definitions — the
-Finance Invoice Assistant, the HR Onboarding Helper, and IT Ticket Triage —
-using their actual MCP tool names, allowed actions, and restricted actions.
-Kelvior's agent definitions already describe what each agent is and isn't
-permitted to do; Threshia's policies formalize that into something a rule
-engine can check per tool call, tool by tool.
+The semantic path is only used for review context. It cannot authorize an unknown tool. An uncovered tool always returns `FLAG`.
 
-Kelvior Systems is a fictional enterprise simulation environment. All
-business data, employees, systems, and processes referenced in the policy
-documents are synthetic.
+Known tools do not need ChromaDB, an LLM provider, or network access.
 
-## Try it
+## Using Threshia
 
-```bash
-python -m venv venv
-venv\Scripts\activate        # Windows
-# source venv/bin/activate   # macOS/Linux
+Threshia provides three main entry points:
 
-pip install -e ".[dev]"
-python -m pytest tests/ -v
-python examples/evaluate_kelvior_tool_calls.py
-```
+- `evaluate()` returns a governance decision.
+- `evaluate_and_log()` also writes that decision to the local audit log.
+- `governed_execute()` enforces the decision before calling the supplied executor.
 
-The example script evaluates five tool calls that each take a different
-path through the engine — a plain read, a gated action with and without
-approval evidence, a never-permitted action, and a tool no policy covers —
-and prints the resulting verdict and reasoning for each.
+Execution follows a simple rule:
 
-No API key or account is required for any of this. The optional LLM layer
-(see below) needs a Mistral or OpenAI API key only if you want to
-exercise it.
+| Decision | Result |
+|---|---|
+| `ALLOW` | the executor may run |
+| `BLOCK` | execution is denied |
+| `FLAG` | execution stops and review is required |
 
-## Architecture and design decisions
+Threshia does not own the external tools, their credentials, or the human-review workflow.
 
-Component responsibilities, the evaluation order, and the reasoning behind
-specific choices (why three verdicts and not four, why policies are parsed
-from Markdown instead of duplicated in Python, why the LLM layer degrades
-instead of failing) are in
-[docs/architecture-overview.md](docs/architecture-overview.md).
+## Policies
 
-## Current scope
+The repository includes example policies for:
 
-What this version supports, and what it deliberately doesn't yet, is in
-[docs/mvp-scope.md](docs/mvp-scope.md) and
-[docs/known-limitations.md](docs/known-limitations.md).
+- finance invoice operations;
+- HR restricted-data lookups;
+- IT ticket triage.
 
-## Tests
+The rules Threshia enforces are stored in validated YAML frontmatter. The Markdown below them explains the policy and can also provide context during semantic review.
 
-77 tests across policy loading, rule evaluation, never-permitted-action
-parsing, both LLM providers, the provider registry, provider switching,
-ChromaDB retrieval, and audit logging. Run them with
-`python -m pytest tests/ -v`. CI runs the same suite on every push, plus
-`ruff`, `mypy`, and a policy-document validation script
-(`.github/workflows/tests.yml`).
+## Run locally
 
-## Verifying the live LLM layer
+Create and activate a virtual environment:
 
-The automated tests mock both providers' API calls, so CI stays free and
-offline-runnable. To confirm a real integration works end to end, add
-the relevant API key to a local `.env` file and run:
+    python -m venv venv
 
-```bash
-python scripts/verify_mistral_live.py
-python scripts/verify_openai_live.py   # set THRESHIA_PROVIDER=openai first
-```
+Windows (PowerShell):
 
-Each evaluates a tool call none of the three policies cover, so it
-exercises ChromaDB retrieval plus a real API call. Both provider paths
-have been manually verified against their real APIs — see
-`docs/known-limitations.md` for details.
+    venv\Scripts\activate
+
+If PowerShell refuses with "running scripts is disabled on this system", that's the default execution policy blocking the activation script, not a Threshia or Python problem. Allow it for the current session and try again:
+
+    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+
+macOS/Linux:
+
+    source venv/bin/activate
+
+Install the project:
+
+    pip install -e ".[dev]"
+
+Run the tests:
+
+    python -m pytest tests/ -v
+
+Run the example:
+
+    python examples/evaluate_tool_calls.py
+
+No API key is required for the deterministic path or the automated tests. Without a configured semantic provider, uncovered tools are flagged for review.
+
+## Semantic review
+
+For uncovered tools, Threshia can use a local ChromaDB index to find related policy context and send that context to either Mistral or OpenAI.
+
+By default, tool parameter names and values are not sent to the provider. Selected values can be explicitly allowed when an integration needs them.
+
+The provider's response is advisory. It cannot turn an uncovered tool into `ALLOW`.
+
+Semantic retrieval is also tested against a larger synthetic policy corpus so that retrieval is exercised beyond the small set of shipped example policies. See [Known Limitations](docs/known-limitations.md) for the current retrieval boundaries.
+
+## Architecture and scope
+
+- [Architecture overview](docs/architecture-overview.md) — request flow, responsibilities, state, and trust boundaries.
+- [Current scope](docs/mvp-scope.md) — what Threshia owns and what remains outside the system.
+- [Known limitations](docs/known-limitations.md) — current technical and verification limitations.
+- [Security](SECURITY.md) — security assumptions and vulnerability reporting.
+
+## Verification
+
+The test suite covers the main decision paths, policy validation, semantic review behavior, retrieval, audit handling, and governed execution.
+
+GitHub Actions runs the test suite and static checks on supported Python versions. External provider calls are mocked in CI.
+
+Manual scripts are available for live provider checks:
+
+    python scripts/verify_mistral_live.py
+
+For OpenAI, first set the provider in your `.env` file:
+
+    THRESHIA_PROVIDER=openai
+
+Then run:
+
+    python scripts/verify_openai_live.py
+
+To switch back, set `THRESHIA_PROVIDER=mistral` (or remove the line — `mistral` is the default). Each live-check script also checks that `THRESHIA_PROVIDER` actually matches the provider it's testing, so a leftover setting from a previous check is reported rather than silently used.
+
+Live checks require the relevant API credentials and are separate from automated test evidence.
 
 ## Author
 
@@ -117,4 +130,4 @@ have been manually verified against their real APIs — see
 
 ## License
 
-[MIT](LICENSE).
+[MIT](LICENSE)

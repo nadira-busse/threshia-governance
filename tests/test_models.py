@@ -175,6 +175,21 @@ def test_verdict_timestamp_auto_generated():
     assert isinstance(v.timestamp, datetime)
 
 
+def test_verdict_provider_suggested_decision_defaults_to_none():
+    v = _make_verdict()
+    assert v.provider_suggested_decision is None
+
+
+def test_verdict_provider_suggested_decision_accepts_valid_value():
+    v = _make_verdict(decision="FLAG", provider_suggested_decision="ALLOW")
+    assert v.provider_suggested_decision == "ALLOW"
+
+
+def test_verdict_invalid_provider_suggested_decision_raises():
+    with pytest.raises(ValueError, match="Invalid provider_suggested_decision"):
+        _make_verdict(provider_suggested_decision="MAYBE")
+
+
 # --- Config tests ---
 
 

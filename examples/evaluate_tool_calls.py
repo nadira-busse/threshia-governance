@@ -1,13 +1,14 @@
 """
-Demo: evaluate a handful of Kelvior-style tool calls through Threshia.
+Demo: evaluate a representative set of tool calls through Threshia.
 
 Run with:
-    python examples/evaluate_kelvior_tool_calls.py
+    python examples/evaluate_tool_calls.py
 
 This loads the real policy documents from threshia/policies/documents/,
-evaluates five tool calls that span every verdict path the engine
-supports, and prints each Verdict. No API key or ChromaDB setup is
-required — these examples are all resolved by the rule layer alone.
+evaluates five tool calls across the main decision paths, and prints each
+Verdict. The first four examples are resolved entirely by deterministic
+rules. The final uncovered-tool example returns a rule-based FLAG when no
+provider is configured and may use the semantic advisory path when one is.
 """
 
 import sys

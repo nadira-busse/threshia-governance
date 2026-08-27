@@ -1,58 +1,38 @@
-# MVP Scope
+# Current Scope
 
-## What this version supports
+This document defines what Threshia currently owns and what remains outside the system.
 
-- Loading policy documents (Markdown + YAML frontmatter) from
-  `threshia/policies/documents/`, with validation of required fields and
-  clear errors for malformed files.
-- Evaluating a single `ToolCall` against the loaded policy set through a
-  fixed rule order: never-permitted check, policy match, approval gating.
-- Distinguishing three verdict sources (`rule`, `llm`, `fallback`) so a
-  reviewer of the audit log can tell how each decision was reached.
-- An optional semantic layer (ChromaDB retrieval + an LLM provider) for
-  tool calls no policy explicitly covers, which is skipped entirely — not
-  attempted and not required — when ChromaDB isn't installed or no
-  provider is configured.
-- Two interchangeable LLM providers (Mistral, OpenAI) behind one shared
-  interface (`threshia/providers/base.py`). Switching is a config change
-  (`THRESHIA_PROVIDER`), not a code change.
-- Optional append-only audit logging through `evaluate_and_log()`, which
-  writes each returned verdict to `audit.jsonl`. The lower-level
-  `evaluate()` function remains side-effect free.
-- Three policy documents, each derived from a real Kelvior agent
-  definition (Finance Invoice Assistant, HR Onboarding Helper, IT Ticket
-  Triage).
+## In scope
 
-## What is not in this version
+Threshia currently provides:
 
-- **Only three of Kelvior's five agents have a corresponding policy.**
-  The Sales Proposal Agent and Learning Policy Coach aren't covered. A tool
-  call from either would currently fall to the fail-safe FLAG default (or
-  the optional semantic layer, if configured), not a dedicated policy.
-- **No integration with a live, running agent.** Every `ToolCall` in the
-  test suite and the example script is constructed directly in Python.
-  Threshia has not been wired into an actual agent runtime that calls
-  `evaluate()` on its own tool-call attempts.
-- **The Mistral and OpenAI providers are tested with mocked API responses**
-  (`tests/test_mistral_provider.py`, `tests/test_openai_provider.py`), not
-  against the real APIs in automated CI. Both paths have been manually
-  verified against their real APIs (see `docs/known-limitations.md`),
-  but neither is checked this way repeatedly or automatically.
-- **No CLI beyond the single example script.** There's no argument-parsing
-  entry point for evaluating an arbitrary tool call from the command line.
-- **No mechanism to reload or hot-swap policies at runtime.** Policies are
-  loaded once per process; changing a policy document requires restarting
-  whatever process called `load_all_policies()`.
+- validated policy documents with structured YAML rules and explanatory Markdown;
+- deterministic checks for blocked actions, explicit policy coverage, and approval requirements;
+- `ALLOW`, `BLOCK`, and `FLAG` governance decisions;
+- semantic retrieval and LLM analysis for uncovered tools, without sending tool parameters to the provider by default;
+- interchangeable Mistral and OpenAI integrations behind one provider interface;
+- a local ChromaDB index that is rebuilt when the loaded policies change;
+- optional JSONL audit logging that excludes tool parameter values by default;
+- separate configuration for what may be sent to an external provider and what may be stored in the audit log;
+- `governed_execute()`, which only invokes the supplied executor when the decision is `ALLOW`;
+- synthetic example policies for finance, HR, and IT service management (ITSM).
 
-## Possible future directions
+Only explicitly covered policy rules can produce `ALLOW`. An uncovered tool remains `FLAG` even when an LLM provider suggests otherwise.
 
-These are directions that would make sense given the current architecture,
-not commitments:
+## Outside the current boundary
 
-- Policies for the two remaining Kelvior agents, extending the same
-  Markdown-plus-frontmatter format.
-- A small CLI (`threshia evaluate --tool ... --params ...`) as a more direct
-  entry point than editing the example script.
-- Wiring `evaluate_and_log()` into an actual agent framework's tool-call
-  hook, to validate the design against a real runtime rather than
-  hand-constructed `ToolCall` objects.
+- **External tool implementation** — Threshia does not register tools, own their credentials, create downstream API clients, or decide how an external operation is implemented. The integrating system supplies the executor.
+
+- **Human-review workflow** — `FLAG` maps to `REVIEW_REQUIRED` when using `governed_execute()`, but Threshia does not provide a review queue, UI, notification flow, or approval service.
+
+- **Independent approval provenance** — Threshia checks whether `human_approval_evidenced` is the literal boolean `True`. It does not independently verify who approved the action or authenticate where that evidence came from.
+
+- **Live agent runtime integration** — The tests and example create `ToolCall` objects directly in Python. Threshia is not currently connected to an agent framework that automatically sends proposed tool calls through the engine.
+
+- **Execution orchestration** — `governed_execute()` invokes the supplied synchronous executor once for `ALLOW` and not at all for `BLOCK` or `FLAG`. It does not provide retries, timeouts, queues, job persistence, compensation, or asynchronous orchestration.
+
+- **Automatic policy reload** — Policies are loaded by the calling process. Changes to policy files are not automatically applied to `Policy` objects that are already in memory. When policies are loaded again, the semantic index is rebuilt if it no longer matches the current policy set.
+
+- **Automated live-provider verification** — CI tests provider behavior with mocked API responses. Live Mistral and OpenAI checks are manual and require local credentials.
+
+- **General-purpose CLI or service API** — The repository provides Python APIs and an example script, but no general command-line interface or hosted service endpoint.

@@ -1,146 +1,186 @@
 # Architecture Overview
 
+Threshia separates governance decisions from external tool execution. The evaluator decides whether a proposed tool call is allowed, blocked, or requires review. `governed_execute()` can then enforce that decision before a caller-supplied executor is invoked.
+
 ## Components
 
-```
+```text
 threshia/
-├── models/       ToolCall, Policy, PolicyMatch, Verdict — plain dataclasses
-├── policies/      loader.py, vector_store.py, and documents/ (the 3 policy .md files)
-├── rules/         never_permitted.py — parses block lists out of policy content
-├── engine/        evaluator.py — the evaluate() decision function
-├── providers/     base.py (shared interface + registry), mistral_provider.py, openai_provider.py
-├── audit/         logger.py — JSONL audit trail
-└── config.py      env loading, path resolution
+├── models/       ToolCall, Policy, PolicyMatch, Verdict
+├── policies/     policy loading, validation, semantic index, policy documents
+├── rules/        structured never-permitted lookup
+├── engine/       policy evaluation and verdict creation
+├── providers/    shared LLM-provider interface, Mistral and OpenAI adapters
+├── audit/        explicit JSONL audit serialization and persistence
+├── execution/    governed execution boundary and ExecutionResult
+└── config.py     environment and runtime-path configuration
 ```
 
-Each package has one responsibility. `models` defines the data shapes.
-`policies` loads and (optionally) indexes policy content. `rules` extracts
-structured rules from that content. `engine` is the only place that combines
-them into a decision. `providers` is the only place that talks to an
-external API. `audit` is the only place that writes to disk for logging
-purposes.
+The main responsibilities are deliberately separate:
+
+- **policies** owns validated policy data and derived retrieval state;
+- **rules** builds deterministic lookups from structured policy fields;
+- **engine** owns governance decisions;
+- **providers** owns external LLM integration;
+- **audit** owns persisted decision records;
+- **execution** enforces whether the supplied executor may run, but does not own the external tool itself.
 
 ## Request flow
 
-```
+```text
 ToolCall
+   ↓
+never_permitted lookup
    │
-   ▼
-never-permitted check (rules/never_permitted.py)
-   │  match → BLOCK, decision_source="rule"
-   ▼  no match
-policy match (does any Policy.applicable_tools contain this tool?)
+   ├─ match ───────────────────────→ BLOCK
    │
-   ├─ no match ──► optional semantic evaluation (policies/vector_store.py +
-   │               providers/mistral_provider.py) ──► LLM verdict, or FLAG
-   │               if the LLM layer isn't configured or fails
+   ↓
+tool explicitly covered by a policy?
+(applicable_tools)
    │
-   └─ match(es) ──► gating check (is this tool in any matched Policy's
-                     gated_tools, and if so, is human_approval_evidenced
-                     present in ToolCall.parameters?)
-                        │  not evidenced → FLAG
-                        ▼  evidenced or not gated
-                     ALLOW
+   ├─ yes → approval required?
+   │          │
+   │          ├─ no ───────────────→ ALLOW
+   │          │
+   │          ├─ yes + literal True → ALLOW
+   │          │
+   │          └─ otherwise ─────────→ FLAG
    │
-   ▼
-Verdict (returned from evaluate(); audit/logger.py appends it to
-audit.jsonl when evaluate_and_log() is used instead of evaluate())
+   └─ no → semantic review path
+              │
+              ├─ provider + retrieval succeed
+              │      ↓
+              │   advisory analysis
+              │      ↓
+              │     FLAG
+              │
+              ├─ semantic path unavailable
+              │      ↓
+              │   rule-based FLAG
+              │
+              └─ retrieval/provider failure
+                     ↓
+                 fallback FLAG
 ```
 
-## Design decisions
+Only explicit deterministic policy coverage may produce `ALLOW`.
 
-### Three verdicts, not four
+A `Verdict` may then be used in one of two ways:
 
-Kelvior Agent Decision Gate — the companion project this repository was
-built alongside — produces four verdicts (`GO`, `CONDITIONAL GO`,
-`REMEDIATE`, `BLOCK`) because it answers a one-time readiness question with
-room for "acceptable with conditions." Threshia answers a different kind of
-question, repeatedly, for every tool call an agent makes at runtime. A
-runtime gate that returns "conditionally allowed" doesn't resolve anything —
-the agent still has to either proceed or not. Threshia uses `ALLOW`, `BLOCK`,
-`FLAG` (a case a human should look at) instead.
+```text
+evaluate() / evaluate_and_log()
+    └─ returns decision; caller still owns enforcement
 
-### Policy content is the single source of truth for what's blocked
+governed_execute()
+    ├─ ALLOW -> supplied executor exactly once -> EXECUTED
+    ├─ BLOCK -> no execution -> DENIED
+    └─ FLAG  -> no execution -> REVIEW_REQUIRED
+```
 
-Each policy document lists actions that are never permitted, as a plain
-Markdown bullet list under a heading containing "never permitted." Rather
-than keeping a separate Python list of the same action names,
-`rules/never_permitted.py` parses that list directly out of the policy's
-`content` field. Updating a policy document is the only step needed to
-change what the rule engine blocks — there's no second place to remember to
-update, and no way for the documentation and the enforced behavior to
-silently drift apart.
+## Policy representation
 
-The trade-off is that this parsing depends on a consistent Markdown
-convention (a heading containing "never permitted," followed by a bullet
-list of backtick-quoted action names). `tests/test_never_permitted.py`
-covers this against both synthetic fixtures and the real policy documents,
-including a case where the intro sentence wraps onto a second line before
-the bullet list starts.
+Each policy is a Markdown document with validated YAML frontmatter.
 
-### Approval gating lives in the policy, not the tool call
+Threshia uses these structured policy fields for deterministic evaluation:
 
-`Policy.gated_tools` marks which of a policy's `applicable_tools` require
-evidenced human approval before `ALLOW`. A `ToolCall` carries that evidence
-as `parameters["human_approval_evidenced"]`. This keeps the *rule* (which
-tools are gated) attached to the policy document where a reviewer would
-look for it, and keeps the *evidence* (was this specific call actually
-approved) attached to the specific call being evaluated. A never-permitted
-match is checked first and overrides gating entirely — approval evidence
-cannot authorize an action that's blocked outright
-(`tests/test_engine.py::test_block_overrides_even_with_approval_evidence`).
+- `applicable_tools` — tools directly governed by the policy;
+- `gated_tools` — governed tools that require approval evidence;
+- `never_permitted` — action names that must return `BLOCK`.
 
-### The optional LLM layer degrades instead of failing
+`never_permitted` is loaded into the typed `Policy` model and combined into the deterministic hard-block lookup. The loader rejects malformed structured values before evaluation can run.
 
-A tool call that no policy's `applicable_tools` covers doesn't automatically
-get an LLM's opinion. `engine/evaluator.py` first checks whether ChromaDB is
-installed and whether the configured provider (`THRESHIA_PROVIDER`) has its
-API key set. If any of those isn't true, or if retrieval finds nothing
-relevant, the engine falls back to the same `FLAG` default it would use
-without this layer at all — the behavior is identical to not having this
-layer at all. Only when a semantic match *is* found but the provider call
-itself fails does the engine report `decision_source="fallback"`, a
-distinct category from `"rule"` and `"llm"` so an audit log can tell "never
-attempted" apart from "attempted and failed" after the fact.
+The Markdown body has a different responsibility: human-readable explanation and semantic retrieval context. Heading spelling, bullet formatting, backticks, prose order, and other presentation changes cannot alter the deterministic hard-block set.
 
-### Providers are swapped through one abstraction, not through the engine
+## Decision precedence
 
-`threshia/providers/base.py` defines the interface every provider
-implements — `is_configured()` and an `evaluate(tool_name, parameters,
-retrieved_policy_texts)` function returning `{"decision": ..., "reasoning":
-...}` — and a small registry (`get_provider(name)`) that looks one up by
-the `THRESHIA_PROVIDER` config value. `engine/evaluator.py` only ever calls
-`get_provider()`; it never imports `mistral_provider` or `openai_provider`
-directly. Both providers share the same prompt-building and
-response-validation logic in `base.py`, so adding a third provider means
-writing one new module with those two functions and registering it — the
-engine, the prompt, and the response contract don't change.
+Evaluation is ordered intentionally:
 
-This mirrors the model-agnostic design used elsewhere in this candidate's
-portfolio (Weft is built the same way, so no single AI vendor is a hard
-dependency): Mistral is the default for EU-sovereignty reasons, but
-switching to OpenAI is a config change (`THRESHIA_PROVIDER=openai` plus
-`OPENAI_API_KEY`), not a code change.
-`tests/test_provider_switching.py::test_engine_uses_openai_when_configured_as_provider`
-proves this by mocking OpenAI's `call_openai()` and confirming the engine
-actually calls it — not just that it labels the verdict "openai."
+1. `never_permitted` hard block;
+2. exact policy coverage;
+3. approval gating;
+4. deterministic `ALLOW` for covered, permitted calls;
+5. advisory semantic handling for uncovered calls.
 
-### `evaluate()` stays pure; logging is a separate wrapper
+The first rule is strongest. Approval evidence cannot override a never-permitted action.
 
-`evaluate()` takes a `ToolCall` and a list of `Policy` objects and returns a
-`Verdict`, with no side effects. `evaluate_and_log()` calls `evaluate()` and
-then appends the result to `audit.jsonl`. Tests call `evaluate()` directly,
-so running the test suite never writes to the real audit log.
+## Approval trust boundary
 
-## Where Kelvior's evidence became Threshia's policies
+For gated tools, Threshia accepts approval evidence only when `ToolCall.parameters["human_approval_evidenced"]` is the literal boolean `True`.
 
-Kelvior's agent definitions (YAML files, not part of this repository)
-specify `mcp_tools`, `allowed_actions`, and `restricted_actions` per agent.
-The three policy documents in `threshia/policies/documents/` translate that
-evidence into the shape Threshia's engine needs:
+That check validates the control value, not its provenance. Threshia does not independently establish who approved the action, when approval occurred, whether evidence was replayed, or whether it is cryptographically bound to the specific call. The integrating system owns that trust boundary.
 
-| Policy | Source agent | What it governs |
+Stronger provenance is deliberately not implemented while no independent approval authority exists. Signing an approval claim inside the same trust boundary that created it would not establish independent authenticity.
+
+## Semantic advisory boundary
+
+Semantic evaluation exists only for tools that no policy explicitly covers.
+
+The path can:
+
+- retrieve related policy context from ChromaDB;
+- pass minimized context to the configured provider;
+- retain provider reasoning and the provider's suggested decision for review.
+
+The semantic path cannot authorize or block an uncovered tool. Provider `ALLOW`, `BLOCK`, and `FLAG` suggestions all produce authoritative Threshia `FLAG` for an uncovered tool. The provider suggestion is stored separately as advisory metadata.
+
+This invariant is enforced in code after provider output is parsed, so it does not depend on prompt wording or model behavior.
+
+External-provider disclosure is separately constrained. By default, semantic provider requests contain the tool name and retrieved policy context but no `ToolCall.parameters` key names or values. `SemanticConfig.parameter_allowlist` can explicitly permit selected parameter values to cross that network boundary. The integrating caller owns that choice.
+
+`SemanticConfig` is independent from `AuditConfig`: one controls network disclosure to an external provider, while the other controls local persistence. A value may be permitted at one boundary and denied at the other.
+
+If index construction, embedding initialization, retrieval, or provider evaluation fails, the engine also returns `FLAG`, with fallback metadata describing the failure.
+
+## Provider abstraction
+
+`threshia/providers/base.py` defines the shared provider contract and provider registry. The evaluator selects a provider through that abstraction rather than importing Mistral or OpenAI directly.
+
+Both provider adapters share the same prompt-building and response-validation path. Switching providers is configuration, not evaluator logic.
+
+## Derived semantic state
+
+The Chroma collection is derived from the current policies.
+
+Its metadata stores a deterministic fingerprint over policy identity, structured rule fields, and policy content. The collection is reused only when both the fingerprint and document count match the currently loaded policy set; otherwise it is rebuilt.
+
+The index is not a source of policy rules. It can be rebuilt from the current policies and is used only for semantic retrieval.
+
+The shipped runtime corpus is intentionally small, so retrieval selectivity is also exercised with a larger synthetic test corpus. In those tests, the expected policy remained within the retrieved top-k for the related and deliberately confusable cases. Irrelevant queries still returned plausible nearest neighbors and distance ranges overlapped. For that reason, no fixed relevance threshold is currently used.
+
+## Audit boundary
+
+`evaluate()` does not write the audit log. On the semantic path it may still update derived Chroma state and call an external LLM provider, so it should not be described as generally pure or side-effect free.
+
+`evaluate_and_log()` evaluates and then persists one audit record.
+
+Audit serialization is explicit rather than a recursive dump of the full `Verdict` object. `ToolCall.parameters` values are excluded by default. A caller may opt selected keys into persistence with `AuditConfig.parameter_allowlist`.
+
+`human_approval_evidenced` is recorded separately as a Threshia-known control state. A logged value of `True` means Threshia received literal `True`; it does not prove authentic human approval.
+
+## Enforcement boundary
+
+A returned `Verdict` is a decision, not enforcement. Direct users of `evaluate()` or `evaluate_and_log()` can still ignore it.
+
+`governed_execute()` provides the enforcement path. It owns only whether the supplied executor may be invoked:
+
+| Verdict | Execution status | Executor behavior |
 |---|---|---|
-| `erp-controlled-actions-001.md` | Finance Invoice Assistant | Read-only ERP lookups (unconditional ALLOW) vs. controlled actions like payment-review triggers (gated) vs. actions like `release_payment` (never permitted) |
-| `hr-restricted-data-001.md` | HR Onboarding Helper | Restricted employee data lookups (gated on approval evidence) vs. actions like `access_medical_or_absence_records` (never permitted) |
-| `itsm-readonly-001.md` | IT Ticket Triage | Read/recommendation-only ITSM tools (unconditional ALLOW), with no gating at all — the cleanest ALLOW case in the set |
+| `ALLOW` | `EXECUTED` | called exactly once |
+| `BLOCK` | `DENIED` | never called |
+| `FLAG` | `REVIEW_REQUIRED` | never called |
+
+`Verdict` and `ExecutionResult` remain separate because they answer different questions: what governance decided versus what happened at the enforcement boundary.
+
+Threshia does not own the executor implementation, credentials, tool registry, retries, timeouts, queues, or human-review workflow. Executor exceptions propagate as execution failures and are not rewritten into governance verdicts.
+
+Audit logging through `governed_execute()` is optional and uses the same `AuditConfig`/`log_verdict()` path as `evaluate_and_log()`. The audit record is written before an allowed executor is invoked. An `ALLOW` audit entry therefore records authorization; it does not prove that the executor was invoked or that execution succeeded.
+
+## Policy domains
+
+The current repository contains three synthetic policy documents:
+
+| Policy | Domain | Coverage example |
+|---|---|---|
+| `erp-controlled-actions-001.md` | Finance | ERP reads, gated payment-review actions, and never-permitted payment mutations |
+| `hr-restricted-data-001.md` | HR | gated restricted-data access and never-permitted sensitive HR actions |
+| `itsm-readonly-001.md` | ITSM | read/recommendation-only ticket operations |

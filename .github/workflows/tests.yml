@@ -9,6 +9,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.11 is the declared minimum (requires-python in pyproject.toml);
+        # 3.13 is the current development version. Both run the full
+        # runtime test suite so the declared minimum is continuously
+        # verified, not just assumed from source inspection.
+        python-version: ["3.11", "3.13"]
 
     steps:
       - uses: actions/checkout@v5
@@ -16,7 +23,24 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
 
       - name: Install dependencies
         run: pip install -e ".[dev]"
@@ -29,6 +53,3 @@ jobs:
 
       - name: Validate policy documents
         run: python scripts/validate_policies.py
-
-      - name: Run tests
-        run: python -m pytest tests/ -v

@@ -1,121 +1,47 @@
 # Known Limitations
 
-This document describes the current boundaries of Threshia.
+This document lists unresolved limitations in the current implementation. Deliberate architecture boundaries are documented in [Current Scope](mvp-scope.md) instead.
 
-## Policy coverage
+## Policy coverage is limited
 
-Three policy documents exist, covering three of Kelvior's five agents.
-A tool call outside those three domains (ERP, HR, ITSM) is either handled
-by the optional semantic layer, if configured, or defaults to `FLAG`. This
-is a coverage gap, not an engine defect — the fail-safe default is working
-as designed in that case.
+The shipped policies cover a small set of synthetic finance, HR, and ITSM examples.
+
+Tools that are not explicitly covered cannot receive `ALLOW`. They follow the uncovered-tool path and return `FLAG`.
+
+This keeps unknown actions from being authorized, but it also means the shipped policies represent only a small part of the situations a larger governance system might need to handle.
 
 ## Semantic retrieval has no relevance threshold
 
-The optional semantic layer retrieves the nearest policy documents from
-ChromaDB, but it does not currently apply a minimum similarity or distance
-threshold before sending that context to the configured LLM provider.
+For an uncovered tool, ChromaDB returns the nearest policy documents without applying a minimum similarity or distance threshold.
 
-The current repository contains three indexed policy documents while
-`TOP_K_POLICIES` is configured as `5`. With this small corpus, semantic
-fallback therefore returns all three policies rather than filtering the
-result to a smaller set of sufficiently relevant policies.
+Retrieval was tested against a larger synthetic policy corpus so that top-k selection could be evaluated beyond the small shipped policy set. The expected policy remained in the retrieved results for the related and deliberately confusable cases that were tested.
 
-The LLM is expected to reason over that retrieved context and prefer
-`FLAG` when the available policy evidence is insufficient. This means the
-semantic path is probabilistic and can return `ALLOW`, `BLOCK`, or `FLAG`;
-there is no additional deterministic relevance gate after retrieval.
+Irrelevant queries still returned plausible nearest neighbors, and the distance ranges for relevant and irrelevant results overlapped. Because of that overlap, the current evidence does not support a reliable fixed threshold.
 
-Adding a relevance threshold would require evaluation evidence for an
-appropriate cutoff rather than choosing one arbitrarily. That calibration
-is outside the current MVP.
+This does not create an authorization risk under the current decision model: provider output is advisory and an uncovered tool still returns `FLAG`. Poor retrieval can, however, make the review context less useful.
 
-## Never-permitted parsing depends on a Markdown convention
+The current evaluation also does not establish retrieval behavior for much larger policy corpora or different embedding models.
 
-`rules/never_permitted.py` extracts blocked action names by looking for a
-line containing restriction language ("never permitted," "not permitted,"
-"must not be performed"), followed by a bullet list of backtick-quoted
-names. `scripts/validate_policies.py` (also run in CI) checks every policy
-document for restriction-sounding language that didn't produce any parsed
-actions, and fails the check if it finds one — this catches the common
-case of a policy author describing a restriction in a way the parser
-doesn't recognize, though it can't catch every possible phrasing.
-`tests/test_never_permitted.py` covers the current three policy documents,
-several edge cases (a wrapped intro sentence, a second unrelated list
-later in the same document), and the validation check itself.
+## Live-provider behavior is not verified in CI
 
-## The automated tests for both LLM providers use mocked API responses
+Mistral and OpenAI request and response handling is tested with mocked API responses in the automated suite. Manual scripts are available for live integration checks, but real provider calls are not run on every push or pull request.
 
-`tests/test_mistral_provider.py` and `tests/test_openai_provider.py` mock
-the HTTP call to their respective APIs, so request/response handling,
-JSON parsing, and error paths are covered by CI without requiring real API
-keys or incurring API costs on every push. `scripts/verify_mistral_live.py`
-and `scripts/verify_openai_live.py` each call their real API for a manual
-integration check — deliberately kept outside the automated test suite so CI
-stays free and offline-runnable.
+Both provider integrations have also been checked manually against the live APIs. Provider reasoning can vary between calls, so these checks are integration evidence rather than deterministic test evidence.
 
-Both provider paths have been manually verified against their real APIs
-using an uncovered tool call (`Sales.CreateDiscountOffer`). In each check,
-retrieval supplied policy context and the configured provider returned a
-valid `BLOCK` verdict.
+## First semantic use may require a network download
 
-The exact reasoning differed between providers and between runs. That is
-expected for probabilistic model output and is why these checks confirm
-integration behavior, not deterministic verdict equivalence.
+On a fresh environment, ChromaDB's default embedding model may need to be downloaded before semantic indexing can complete. If the model cannot be downloaded or initialized, uncovered tools fall back to `FLAG`.
 
-This confirms the retrieval-plus-LLM path works end to end for both
-providers, but each is a manual check, not a repeated or automated one —
-a different tool call or a future model update on either side could
-produce a different verdict.
-
-## ChromaDB's embedding model requires a one-time network download
-
-The first call to `vector_store.build_index()` on a fresh machine
-downloads ChromaDB's default embedding model (~90MB) from Hugging Face.
-Without internet access at that moment, this call fails; the engine's
-fallback behavior (skip the semantic layer, default to `FLAG`) only
-applies to a missing API key or missing ChromaDB installation, not to a
-failed download partway through setup. `tests/test_vector_store.py`
-skips its tests (rather than failing them) when this download fails for a
-network-related reason.
-
-## No live agent integration
-
-Every tool call evaluated in this repository, in tests and in the example
-script, is a `ToolCall` object constructed directly in Python. Threshia has
-not been connected to an actual running agent that generates tool-call
-attempts on its own.
-
-## Human approval evidence is not independently verified
-
-For gated tool calls, Threshia currently reads
-`human_approval_evidenced` from the caller-supplied `ToolCall.parameters`
-and uses that boolean as the approval-evidence signal.
-
-The engine deterministically enforces that gated actions require this
-signal and that never-permitted actions remain blocked even when the
-signal is present. It does not, however, verify that the value came from
-an independent human-approval workflow, trusted identity system, signed
-approval record, or other external source.
-
-This is sufficient for the current directly-constructed test and example
-calls, but a live agent integration would need to establish approval
-evidence outside the agent-controlled tool arguments before passing that
-trusted result into the governance engine.
+Directly covered deterministic calls do not depend on this download.
 
 ## Audit log has no rotation or size management
 
-`audit.jsonl` grows without bound as `evaluate_and_log()` is called. There
-is no log rotation, archiving, or size limit in this version.
+`audit.jsonl` is append-only and currently has no built-in rotation, archival policy, or size limit.
 
-## Packaging verification is manual, not automated in CI
+Tool parameter values are excluded by default, but retained audit records still accumulate until the operator manages the file externally.
 
-A clean wheel install was manually verified by building the package with
-`python -m build`, installing it in a separate virtual environment, and
-importing it from outside the repository. `load_all_policies()` returned
-all three packaged policy IDs, confirming that the policy documents ship
-with the wheel and can be loaded without relying on the source tree.
+## Packaging verification is manual
 
-This verification is not currently automated in CI, so a future change to
-`pyproject.toml` or the policy directory structure could break packaging
-without the CI pipeline detecting it.
+A clean wheel install has been manually checked to confirm that packaged policy documents are included and can be loaded outside the source tree. This packaging check is not currently part of GitHub Actions.
+
+A packaging change could therefore break installed policy availability without being detected by the current CI workflow.

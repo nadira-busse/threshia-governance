@@ -1,7 +1,7 @@
 """
 Tests for threshia.engine.evaluator.
 
-Uses the real, loaded Kelvior policy set (not fixtures) so these tests
+Uses the real, loaded repository policy set (not fixtures) so these tests
 double as an integration check: if a policy document's wording changes
 in a way that breaks parsing or matching, these tests catch it.
 """
@@ -92,6 +92,24 @@ def test_allows_gated_erp_action_with_evidence(policies):
     )
     verdict = evaluate(call, policies)
     assert verdict.decision == "ALLOW"
+
+
+@pytest.mark.parametrize(
+    "invalid_evidence",
+    [False, None, "true", "false", "yes", "no", 1, 0],
+)
+def test_gated_action_rejects_non_literal_true_approval_evidence(
+    policies, invalid_evidence
+):
+    call = ToolCall(
+        tool_name="ERP.PaymentReviewTrigger",
+        parameters={"human_approval_evidenced": invalid_evidence},
+    )
+
+    verdict = evaluate(call, policies)
+
+    assert verdict.decision == "FLAG"
+    assert verdict.decision_source == "rule"
 
 
 def test_flags_gated_hr_lookup_without_evidence(policies):

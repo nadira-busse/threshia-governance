@@ -15,18 +15,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # --- Project paths ---
-# Path.resolve() gives absolute paths regardless of where you run the script from.
-# In Next.js you'd use process.cwd() — this is the Python equivalent.
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 POLICIES_DIR = PROJECT_ROOT / "threshia" / "policies" / "documents"
 
-# Writable runtime data (ChromaDB index, audit log) must not default to
-# living inside the installed package location — that's read-only in many
-# install scenarios, and conceptually wrong even when it happens to be
-# Writable runtime data must not default to the installed package location.
-# THRESHIA_RUNTIME_DIR lets you choose another location; when unset,
-# runtime data is written relative to the current working directory.
+# Writable runtime data such as the ChromaDB index and audit log must not
+# default to the installed package location, which may be read-only.
+# THRESHIA_RUNTIME_DIR can override the runtime location; otherwise the
+# current working directory is used.
 _runtime_dir = os.getenv("THRESHIA_RUNTIME_DIR", "").strip()
 RUNTIME_DIR = Path(_runtime_dir).expanduser().resolve() if _runtime_dir else Path.cwd()
 

@@ -1,12 +1,15 @@
 """
 Live OpenAI verification — calls the REAL OpenAI API, not a mock.
 
+Manually verifies that the current provider integration can complete the
+live semantic-provider path: retrieval, the real API call, response
+parsing, and Threshia's authoritative FLAG result for an uncovered tool.
 This is deliberately NOT part of the automated test suite or CI: it costs
 a real API call and depends on network access and a real OPENAI_API_KEY,
 neither of which belong in a suite that should run offline and for free
-on every push. Run this manually whenever you want to confirm the LLM
-layer still works end to end against the actual API — e.g. after an
-OpenAI API change, or before mentioning this layer in an interview.
+on every push. Run this manually after an OpenAI API change or a change
+to the prompt/provider adapter, to confirm the integration still works
+end to end against the real API rather than a mock.
 
 Setup:
     1. Get an OpenAI API key: https://platform.openai.com/api-keys
@@ -16,10 +19,9 @@ Setup:
     3. Run:
            python scripts/verify_openai_live.py
 
-This evaluates one tool call that no policy explicitly covers
-(Sales.CreateDiscountOffer — Kelvior's Sales Proposal Agent isn't one of
-the three agents Threshia has a policy for), so the engine has to fall
-through to semantic retrieval + a real OpenAI call to produce a verdict.
+`Sales.CreateDiscountOffer` is deliberately not listed by any current policy,
+so the engine has to fall through to semantic retrieval + a real OpenAI call
+to produce a verdict.
 """
 
 import sys
@@ -60,17 +62,23 @@ def main() -> int:
 
     verdict = evaluate(tool_call, policies)
 
-    print(f"Verdict          : {verdict.decision}")
-    print(f"Decision source  : {verdict.decision_source}")
-    print(f"Reasoning        : {verdict.reasoning}")
-    print(f"Policy coverage  : {verdict.policy_coverage}")
-    print(f"Retrieval score  : {verdict.retrieval_score}")
-    print(f"Provider         : {verdict.provider}")
-    print(f"Evaluation time  : {verdict.evaluation_ms}ms")
+    print(f"Authoritative decision : {verdict.decision}")
+    print(f"Decision source        : {verdict.decision_source}")
+    print(f"Provider suggestion    : {verdict.provider_suggested_decision}")
+    print(f"Reasoning              : {verdict.reasoning}")
+    print(f"Policy coverage        : {verdict.policy_coverage}")
+    print(f"Retrieval score        : {verdict.retrieval_score}")
+    print(f"Provider               : {verdict.provider}")
+    print(f"Evaluation time        : {verdict.evaluation_ms}ms")
 
     if verdict.decision_source == "llm":
-        print("\nConfirmed: the real OpenAI API was called and returned a "
-              "usable verdict.")
+        print(
+            "\nConfirmed: the real OpenAI API was called and returned a "
+            "usable advisory response. The authoritative decision is "
+            f"Threshia's own ({verdict.decision}), not the provider's "
+            "suggestion — an uncovered tool can never receive an "
+            "authoritative ALLOW from provider output alone."
+        )
         return 0
     elif verdict.decision_source == "fallback":
         print("\nRetrieval found a semantic match, but the OpenAI call "

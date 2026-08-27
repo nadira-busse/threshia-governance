@@ -6,21 +6,35 @@ If you find a potential security issue in Threshia, please do not open a public 
 
 Use GitHub Private Vulnerability Reporting for this repository instead.
 
-When reporting a vulnerability, include where possible:
+Include, where possible:
 
 - a short description of the issue;
-- the affected file, component, policy rule, provider integration, or workflow;
+- the affected component, policy, provider integration, or execution path;
 - reproduction details;
-- the potential impact;
-- any relevant environment or configuration context.
+- potential impact;
+- relevant environment or configuration context.
 
-Threshia is a public MIT-licensed portfolio project and reference implementation.
+Do not include API keys, tokens, passwords, or other credentials in a report.
 
-It is not operated as a production governance service for third-party users.
+## Security boundaries
 
-Security of an independently deployed or integrated instance also depends on the operator's own configuration, credentials, provider access, agent integration, and surrounding approval controls.
+Threshia evaluates governance rules and can enforce a decision through
+`governed_execute()`, but the integrating system remains responsible for
+the external tools, their credentials, and the surrounding runtime.
 
-Do not include API keys, tokens, passwords, or other credentials in a vulnerability report.
+Approval evidence is supplied by the integrating system. Threshia checks
+the expected approval value but does not independently authenticate who
+approved an action.
+
+Calls to external semantic providers and local audit persistence are
+separate trust boundaries. Tool parameter values are excluded from both
+by default and can only be included through explicit configuration.
+
+Deployments are responsible for protecting provider credentials, runtime
+files, audit data, and the source of approval evidence.
+
+See [Architecture overview](docs/architecture-overview.md) for the detailed
+data-flow and responsibility boundaries.
 
 ## Supported version
 
@@ -32,4 +46,4 @@ Older revisions and independently modified deployments are not separately mainta
 
 No response-time, remediation-time, or support SLA is provided.
 
-Reports will be reviewed when possible, and confirmed repository issues may be addressed according to their severity, reproducibility, and the current maintenance scope of the project.
+Reports are reviewed according to severity, reproducibility, and the current maintenance scope of the repository.

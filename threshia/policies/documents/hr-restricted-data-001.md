@@ -8,6 +8,15 @@ applicable_tools:
 gated_tools:
   - HR.EmployeeProfileLookup
   - HR.TrainingStatusLookup
+never_permitted:
+  - modify_employee_record
+  - approve_hiring_decision
+  - approve_employee_status_change
+  - change_training_completion_status
+  - access_compensation_data
+  - access_medical_or_absence_records
+  - provide_legal_or_disciplinary_advice
+  - send_personalized_hr_guidance_without_review
 source: Kelvior Data Governance Policy + HR Onboarding Helper agent definition (AGT-HR-ONB-001)
 ---
 
@@ -15,7 +24,7 @@ source: Kelvior Data Governance Policy + HR Onboarding Helper agent definition (
 
 ## Context
 
-The Kelvior HRMS Connector (MCP-HR, Workday) operates under a
+The HRMS connector (MCP-HR, Workday) operates under a
 `restricted_hr_context` access policy. Employee profile and training
 status data are classified `restricted` and `confidential`. Any tool
 call that summarizes or forwards this data to an employee-facing
@@ -40,16 +49,12 @@ are gated: the engine flags the call itself when no approval evidence is
 present, rather than allowing the lookup and gating only the response
 sent onward.
 
-**The following actions are never permitted for an autonomous agent:**
-
-- `modify_employee_record`
-- `approve_hiring_decision`
-- `approve_employee_status_change`
-- `change_training_completion_status`
-- `access_compensation_data`
-- `access_medical_or_absence_records`
-- `provide_legal_or_disciplinary_advice`
-- `send_personalized_hr_guidance_without_review`
+**The machine-enforced never-permitted actions for this policy are
+defined in the `never_permitted` frontmatter field above.** They cover
+modifying employee records, approving hiring or employee-status
+decisions, changing training-completion status, accessing compensation
+or medical/absence data, and giving legal, disciplinary, or unreviewed
+personalized HR guidance.
 
 Compensation, medical, absence and disciplinary data fall outside the
 allowed data scope entirely — no approval gate makes these acceptable

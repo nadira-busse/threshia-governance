@@ -10,6 +10,15 @@ applicable_tools:
 gated_tools:
   - ERP.InvoiceApprovalPrepare
   - ERP.PaymentReviewTrigger
+never_permitted:
+  - approve_invoice
+  - approve_payment
+  - release_payment
+  - modify_vendor_bank_details
+  - bypass_purchase_order_matching
+  - override_invoice_exception
+  - approve_employee_expense
+  - create_financial_commitment
 source: Kelvior Agent Approval Procedure + Finance Invoice Assistant agent definition (AGT-FIN-INV-001)
 ---
 
@@ -17,7 +26,7 @@ source: Kelvior Agent Approval Procedure + Finance Invoice Assistant agent defin
 
 ## Context
 
-Finance-facing agents connected through the Kelvior ERP Connector
+Finance-facing agents connected through the ERP connector
 (MCP-ERP, Dynamics 365 Business Central) operate under a
 `read_with_controlled_actions` access policy. Read operations
 (invoice lookups, purchase order matching) are low-risk. Controlled
@@ -38,26 +47,21 @@ No human approval gate is required.
 Tools: `ERP.InvoiceApprovalPrepare`, `ERP.PaymentReviewTrigger`.
 
 These write to the ERP or initiate a payment-related workflow. Per the
-Kelvior Agent Approval Procedure, any agent action with
+approval procedure, any agent action with
 `write_access_enabled: true` and `controlled_actions_enabled: true`
 must have `human_approval_gate: true` before it may execute
 autonomously. Without an evidenced approval gate, these actions must
 be flagged for human review rather than allowed to proceed.
 
-**The following actions are never permitted for an autonomous agent,
-regardless of approval gate status:**
-
-- `approve_invoice`
-- `approve_payment`
-- `release_payment`
-- `modify_vendor_bank_details`
-- `bypass_purchase_order_matching`
-- `override_invoice_exception`
-- `approve_employee_expense`
-- `create_financial_commitment`
+**The machine-enforced never-permitted actions for this policy are
+defined in the `never_permitted` frontmatter field above, regardless of
+approval gate status.** They cover final financial authorization
+(invoice approval, payment approval, payment release), vendor bank-detail
+changes, purchase-order-match bypass, invoice exception overrides,
+employee expense approval, and creating financial commitments.
 
 These represent final financial authorization or exception-override
-actions. Kelvior's segregation-of-duties principle requires a human
+actions. The segregation-of-duties principle requires a human
 to hold this authority — an agent preparing a recommendation is
 acceptable; an agent finalizing the decision is not.
 

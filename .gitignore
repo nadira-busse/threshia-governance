@@ -28,6 +28,12 @@ internal/
 .vscode/
 .idea/
 
+# Local AI/developer tooling settings
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
+
+# Agents
+AGENTS.md

@@ -29,6 +29,18 @@ class Policy:
                      unconditionally once matched. Defaults to empty list
                      for policies where nothing needs gating (e.g. the
                      ITSM read-only policy).
+        never_permitted: Action names this policy blocks outright, regardless
+                          of approval evidence. This is the deterministic,
+                          machine-authoritative source for the rule engine's
+                          hard-block check (threshia/rules/never_permitted.py) —
+                          loaded and validated from the policy's YAML
+                          frontmatter, not parsed from Markdown prose. The
+                          Markdown body may still explain these restrictions
+                          in words, but formatting changes there cannot affect
+                          this field. Defaults to empty list for policy
+                          fixtures/tests that don't need it; the loader
+                          requires at least one entry for real policy
+                          documents (see threshia/policies/loader.py).
     """
 
     id: str
@@ -39,6 +51,7 @@ class Policy:
     content: str
     file_path: str
     gated_tools: list[str] = field(default_factory=list)
+    never_permitted: list[str] = field(default_factory=list)
 
 
 @dataclass

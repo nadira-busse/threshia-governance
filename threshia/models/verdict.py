@@ -1,20 +1,35 @@
 """
 Verdict model.
 
-The output of the governance engine. Every tool call evaluation
-produces exactly one Verdict, regardless of whether it was decided
-by a deterministic rule, an LLM evaluation, or a fallback.
+A Verdict is the authoritative governance decision for one ToolCall,
+produced by evaluate() (threshia/engine/evaluator.py) regardless of
+whether the decision came from a deterministic rule, semantic provider
+analysis, or a safe fallback.
 
-Design decision D1: three verdicts only (ALLOW / BLOCK / FLAG).
-No CONDITIONAL — runtime governance is a gate, not an assessment.
-See docs/architecture-overview.md section on verdict design for rationale.
+Only three decisions exist: ALLOW, BLOCK, FLAG. There is no CONDITIONAL
+— a runtime gate has to tell the caller whether to proceed, stop, or send
+the call for review, not produce an assessment for later judgment. See
+docs/architecture-overview.md for the fuller rationale.
 
-Design decision D7: decision_source tracks HOW the verdict was reached.
-"rule" = deterministic check (<1ms), "llm" = RAG + LLM (~300ms),
-"fallback" = LLM failed, defaulting to FLAG for safety.
-This replaced the original confidence field (LLM self-assessed
-confidence is unreliable — retrieval_score and policy_coverage
-are more meaningful signals).
+decision_source records the evaluation path: "rule" for deterministic
+evaluation, "llm" when semantic provider analysis contributed advisory
+context, "fallback" when the semantic path failed safely.
+decision_source replaces a plain LLM self-reported confidence score,
+which isn't a reliable signal on its own — retrieval_score and
+policy_coverage are more meaningful for understanding an "llm" verdict.
+
+Only explicit deterministic policy coverage may produce ALLOW. A tool
+call with no policy in its applicable_tools has, by definition, no policy
+that explicitly prohibits it either, so an uncovered tool call's
+semantic-path verdict is always authoritative FLAG, regardless of what
+the configured provider suggested (ALLOW, BLOCK, or FLAG). This is
+enforced in threshia/engine/evaluator.py after the provider response is
+parsed and validated, not by prompt wording. The provider's actual
+suggestion is preserved separately in provider_suggested_decision and
+folded into `reasoning` — never silently dropped, never treated as
+authorization. See tests/test_semantic_evaluation.py for the regression
+coverage, including a case modeled on a provider recommending ALLOW for
+a semantically unrelated, uncovered tool call.
 """
 
 from dataclasses import dataclass, field
@@ -55,6 +70,18 @@ class Verdict:
         evaluation_ms: How long the evaluation took in milliseconds.
         timestamp: When the verdict was produced.
         fallback_reason: Only set when decision_source is "fallback".
+        provider_suggested_decision: The raw decision an LLM provider
+                                      returned for an uncovered tool call,
+                                      when decision_source is "llm" and
+                                      that suggestion differs from the
+                                      authoritative `decision` (see the
+                                      module docstring above). None
+                                      whenever no provider suggestion
+                                      exists or it already matches
+                                      `decision` — this field exists
+                                      specifically to make an overridden
+                                      suggestion inspectable, not to
+                                      duplicate agreement.
     """
 
     decision: Literal["ALLOW", "BLOCK", "FLAG"]
@@ -68,9 +95,10 @@ class Verdict:
     evaluation_ms: int
     timestamp: datetime = field(default_factory=datetime.now)
     fallback_reason: str | None = None
+    provider_suggested_decision: str | None = None
 
     def __post_init__(self):
-        """Validate decision and decision_source values."""
+        """Validate decision, decision_source, and provider_suggested_decision."""
         if self.decision not in VALID_DECISIONS:
             raise ValueError(
                 f"Invalid decision '{self.decision}'. "
@@ -80,4 +108,13 @@ class Verdict:
             raise ValueError(
                 f"Invalid decision_source '{self.decision_source}'. "
                 f"Must be one of: {VALID_SOURCES}"
+            )
+        if (
+            self.provider_suggested_decision is not None
+            and self.provider_suggested_decision not in VALID_DECISIONS
+        ):
+            raise ValueError(
+                f"Invalid provider_suggested_decision "
+                f"'{self.provider_suggested_decision}'. "
+                f"Must be one of: {VALID_DECISIONS} or None."
             )
